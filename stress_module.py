@@ -1,3 +1,5 @@
+from cgi import test
+from turtle import color
 import numpy as np
 import pandas as pd
 import random
@@ -5,20 +7,19 @@ import math
 import matplotlib.pyplot as plt
 import matplotlib as mpl
 mpl.rcParams['text.usetex'] = True
-mpl.rcParams['text.latex.preamble'] = [r'\usepackage{amsmath}'] #for \text command
+# mpl.rcParams['text.latex.preamble'] = [r'\usepackage{amsmath}'] #for \text command
 import csv
 
 from mesh_distribution import MffProcessing, MeshApertureDistribution     
 
 # ---- Stress loading module ----
 class StressToAperture(MeshApertureDistribution):
-    def __init__(self, node_df, ele_df, jrc_func, jcs, phi_r, Ks):
+    def __init__(self, node_df, ele_df, jrc_func, jcs, phi_r):
         self.ele_df = ele_df
         self.node_df = node_df
         self.jrc_func = jrc_func
         self.JCS = jcs
         self.phi_r = phi_r
-        self.Ks = Ks
         
     def bondary_stress(self, stress_x, stress_y, stress_z):
         self.model_stress = [
@@ -34,133 +35,167 @@ class StressToAperture(MeshApertureDistribution):
             tem_vector.append(ele_node[i + 1] - ele_node[0])
 
         normal_vector = np.cross(tem_vector[0], tem_vector[1])
+        normal_vector /= np.linalg.norm(normal_vector)
         
         return normal_vector
     
-    def ele_stress(self, ele_center, normal_vector):
+    def ele_stress(self, ele_centroid, normal_vector):
         """ Get stress on element """
+        
         model_stress = self.model_stress
-        
-        # Get the stress of element from the boundary conditions
-        # normal stress: calculate each component of stress onto the element center
-        # shear stress: get the composition of model stress (vetor of composition of model stress)
-        total_normal_stress = list()
-        compo_vector = list()
+        # Part1: Use Cauchy's formula (F = \sigma \cdot N) to calculate the traction from boundary stress
+        # Cauchy stress tensor (variation: sigma)
+        sigma = np.zeros([3, 3])
         for stress_idx in range(len(model_stress)):
-            if normal_vector[stress_idx] < 0:
-                normal_vector = [normal_vector * -1 for normal_vector in normal_vector]
-            # caculate cosine between normal vector and boundary stress
-            cosine_demo = (
-                        (np.dot(model_stress[stress_idx][0], model_stress[stress_idx][0]))**0.5 \
-                        * (np.dot(normal_vector, normal_vector))**0.5
-            )
-            cosine_normal_stress = np.dot(model_stress[stress_idx][0], normal_vector) / cosine_demo
+            # Get the element boundary stress from boundary condistion
+            ele_boundary_stress = (model_stress[stress_idx][1][0] * ele_centroid[2]) + model_stress[stress_idx][1][1]
+            sigma[stress_idx, stress_idx] = ele_boundary_stress
 
-            if stress_idx in [0, 1]:
-                model_ele_stress = (model_stress[stress_idx][1][0] * ele_center[2]) + model_stress[stress_idx][1][1]
-            else:
-                model_ele_stress = model_stress[stress_idx][1][1]
-            total_normal_stress.append(np.array(model_ele_stress) * cosine_normal_stress)
-            compo_vector.append(model_ele_stress)
-           
-        # normal stress: sum of the stress conduct on the element
-        # shear stress: calulate the shear stress from the composition stress (parallel to the plane) 
-        if normal_vector[2] < 0:
-            normal_vector = [normal_vector * -1 for normal_vector in normal_vector]
+        # Part2: Calculate the traction(variation: traction) of fracture element from element Cauchy stress tensor
+        traction = np.dot(sigma, normal_vector)
+        
+        # Part3: Calculate the normal stress & shear stress from traction of fracture element 
+        element_normal_stress = traction.dot(normal_vector)
+        traction_normal_vector_cosine = traction.dot(normal_vector) \
+                                        / (np.linalg.norm(traction) * np.linalg.norm(normal_vector))
+        if traction_normal_vector_cosine > 1:
+            traction_normal_vector_cosine = 1
             
-        vector_magnitude = np.linalg.norm(compo_vector)
-        tem_demo = (
-            (np.dot(compo_vector, compo_vector))**0.5 \
-            * (np.dot(normal_vector, normal_vector))**0.5
-        )
-        cosine_normal_compo = np.dot(compo_vector, normal_vector) / tem_demo
-        sine_normal_compo = (1 - cosine_normal_compo)**0.5
+        traction_normal_vector_theta = np.arccos(traction_normal_vector_cosine)
+        traction_normal_vector_sine = np.sin(traction_normal_vector_theta)
+        element_shear_stress = np.linalg.norm(traction) * traction_normal_vector_sine
         
-        # normal stress \ shear stress
-        total_normal_stress = np.sum(total_normal_stress)
-        total_shear_stress = vector_magnitude * sine_normal_compo
-        
-        return total_normal_stress, total_shear_stress
-
-    def cal_aperture_barton(self, ele_aper, total_normal_stress, total_shear_stress, JRC, JCS, phi_r, Ks):
+        return element_normal_stress, element_shear_stress
+       
+    def cal_aperture_barton(self, ele_aper, ele_normal_stress, ele_shear_stress, JRC, JCS, phi_r):
         """ Normal stress: Barton & Bandis, 1983
             Shear stress: Olsson & Barton, 2001
         """ 
-        # --- Part1: Normal stress
-        E = ((JRC**2.5) * ele_aper * 1000000)**0.5          # unit: um
+
+        E = ((JRC**2.5) * ele_aper * 1e6)**0.5          # unit: um
         E = E / 1000                                        # unit: mm 
+        # Part1: Normal stress
+        un = self.normal_stress_barton(E, ele_normal_stress, JRC, JCS)
+
+        # Part2: shear stress
+        nor_dis = self.shear_stress_barton(ele_normal_stress, ele_shear_stress, JRC, JCS, phi_r)
+  
+        # Part3: calculate mechanic aperture      
+        #   normal stress closure [mm]
+        cal_ele_m_aper = E - un
+        #   shear dilation [mm]
+        cal_ele_m_aper += nor_dis
+        
+        if cal_ele_m_aper < 0:
+            cal_ele_m_aper = 6e-4
+        
+        # Part4: tranfer to hydraulic aperture (m)
+        cal_hydro_aperture = ((cal_ele_m_aper * 1000)**2) / (JRC**2.5)  # unit: um
+        cal_hydro_aperture /= (10**6)   # unit: m
+
+        return cal_hydro_aperture
+
+    def normal_stress_barton(self, E, ele_normal_stress, JRC, JCS):
+        """ Express fracture closure behavior, following Barton et al., 1983 
+        Args:
+            E (float): Mechanical aperture of element [mm]
+            ele_normal_stress (float): normal stress conduct on element
+            JRC (float): JRC of fracture
+            JCS (float): JCS of fracture
+        Returns:
+            float(un): closure of fracture under normal stress [mm]
+        """
         K = 0.0178 * (JCS / E) + 1.748*JRC - 7.155          # unit: Gpa ?
         a = 1 / K
         umax = -0.3 - (0.006*JRC) + 2.24*((JCS/E)**-0.25)   # unit: mm
         b = 1 / (umax * K)
-        
-        un = (total_normal_stress * a) / (total_normal_stress * b + 1)  # un unit: mm
+        un = (ele_normal_stress * a) / (ele_normal_stress * b + 1)  # un unit: mm
         if un > umax:
-            un = umax
-        
-        # print(ele_aper)
+            return umax
+        else:
+            return un
             
-        # --- Part2: Shear stress
-        # From mobilized JRC turn into mechanic aperture
-        # Dilation equals to: shear displacement * tan(d_mob)
-        # shear stress
-        tau_peak = total_normal_stress\
-                * math.tan((JRC * math.log10(JCS/total_normal_stress) + phi_r) * math.pi/180)
-        tau_mob = total_shear_stress
-        if tau_mob > tau_peak:
+    def shear_stress_barton(self, ele_normal_stress, ele_shear_stress, JRC, JCS, phi_r):
+        """ Express fracture dilation behavior under shear stress, following Barton et al., 1982 
+        Args:
+            ele_normal_stress (float): _description_
+            ele_shear_stress (float): _description_
+            JRC (float): _description_
+            JCS (float): _description_
+            phi_r (float): _description_
+
+        Returns:
+            float: _description_
+        """
+        if JCS == ele_normal_stress:
+            ele_normal_stress -= 0.001
+        i_theta = JRC * math.log10(JCS / ele_normal_stress)
+        jrc_table = (-(phi_r / i_theta), 0, 0.75, 1, 0.85, 0.7, 0.5, 0)
+        dis_table = (0, 0.3, 0.6, 1, 2, 4, 10, 100)  
+        
+        tau_peak = ele_normal_stress\
+                * math.tan((JRC * math.log10(JCS / ele_normal_stress) + phi_r) * math.pi/180)
+        tau_mob = ele_shear_stress
+        if ele_shear_stress > tau_peak:
             tau_mob = tau_peak
             
         # JRC
-        JRC_mob = (math.degrees(math.atan(tau_mob / total_normal_stress)) - phi_r)\
-                / math.log10(JCS / total_normal_stress)
-        
+        JRC_mob = (math.degrees(math.atan(tau_mob / ele_normal_stress)) - phi_r)\
+                / math.log10(JCS / ele_normal_stress)
+        JRC_peak = JRC
+        if JRC_mob > JRC_peak:
+            JRC_mob = JRC_peak
+        jrc_mob_div_jrc_peak = JRC_mob/ JRC_peak
+
         # shear displacement
-        shear_dis_peak = 10  # Temp unit(mm)
-        shear_dis = total_shear_stress / Ks
-        if shear_dis > shear_dis_peak:
-            shear_dis = shear_dis_peak
-          
+        # shear_dis_peak = 1000/500 * ((JCS/1000) ** 0.33)  # Temp unit(mm)
+        shear_dis_peak = 2
+        
+        # Use the table from Barton et al., 1982 to calculate the shear displacement
+        for i in range(len(jrc_table)-1):
+            if jrc_mob_div_jrc_peak < 1:
+                if (jrc_mob_div_jrc_peak >= jrc_table[i]) and (jrc_mob_div_jrc_peak < jrc_table[i+1]):
+                    jrc_ratio = (jrc_mob_div_jrc_peak - jrc_table[i]) / (jrc_table[i+1] - jrc_table[i])
+                    dis_ratio = jrc_ratio * (dis_table[i+1] - dis_table[i]) + dis_table[i]
+                    shear_dis = dis_ratio * shear_dis_peak
+                elif jrc_mob_div_jrc_peak < jrc_table[0]:
+                    shear_dis = 0        
+            elif jrc_mob_div_jrc_peak >= 1:
+                if (jrc_mob_div_jrc_peak <= jrc_table[i]) and (jrc_mob_div_jrc_peak > jrc_table[i+1]):
+                    jrc_ratio = (jrc_table[i] - jrc_mob_div_jrc_peak) / (jrc_table[i] - jrc_table[i+1])
+                    dis_ratio = jrc_ratio * (dis_table[i] - dis_table[i+1]) + dis_table[i]
+                    shear_dis = dis_ratio * shear_dis_peak
+                elif jrc_mob_div_jrc_peak <= jrc_table[-1]:
+                    shear_dis = 100 * shear_dis_peak
+                
         # normal displacement
         M = 2
-        d_mob = 1 / M * JRC_mob * math.log10(JCS / total_normal_stress)
+        d_mob = 1 / M * JRC_mob * math.log10(JCS / ele_normal_stress)
         nor_dis = shear_dis * math.tan((d_mob) / 180 * math.pi)
-        if tau_mob == tau_peak:
-            nor_dis = tau_peak / Ks * math.tan((d_mob) / 180 * math.pi)
         
-        # --- Part3: calculate mechanic aperture      
-        # normal stress closure
-        cal_ele_m_aper = E - un
-        # shear dilation
-        cal_ele_m_aper += nor_dis
-        
-        if cal_ele_m_aper < 0:
-            cal_ele_m_aper = 1e-8
-        
-        # ---- Part4: tranfer to hydraulic aperture (m)
-        self.m_aperture = cal_ele_m_aper
-        cal_hydro_aperture = (((cal_ele_m_aper * 1000)**2) / (JRC**2.5)) * (10**-6)
-        
-        self.un = un
-        self.nor_dis = nor_dis
-        self.shear = tau_mob
-        self.shear_dis = shear_dis
-        self.hydro_aperture = cal_hydro_aperture
-        self.test = cal_ele_m_aper
-
-        return cal_hydro_aperture
+        return nor_dis
     
     def tracelength_jrc(self, fracture_index, trace_length):
         """ determine the JRC correspond to trace length """
         mean_func = self.jrc_func[fracture_index-1]
-        jrc_mean = (mean_func[0]**2) * trace_length + mean_func[1]*trace_length + mean_func[2]
-        
+        jrc_mean = mean_func[0] * (trace_length**2) + mean_func[1] * trace_length + mean_func[2]
         return jrc_mean
     
+    def element_centroid(self, ele_node):
+        ''' Get the element centroid '''
+        ele_center = []
+        for i in range(np.shape(ele_node)[1]):
+            tem_center = 0
+            for j in range(np.shape(ele_node)[0]):
+                tem_center += ele_node[j, i]
+            ele_center.append(1/3 * (tem_center))
+            
+        return ele_center
+        
     def single_ele_stress_apply(self, fracture_index, ele_idx, jrc_plane):
         jrc = jrc_plane
         jcs = self.JCS[fracture_index - 1]
         phi_r = self.phi_r[fracture_index - 1]
-        Ks = self.Ks[fracture_index - 1]
         
         ele_node = np.empty([3,3])
         ele_aper = self.ele_df['Apert'][ele_idx]
@@ -170,29 +205,23 @@ class StressToAperture(MeshApertureDistribution):
             for cor_idx, cor in enumerate(self.node_df.loc[node][0 : 3]):
                 ele_node[node_idx, cor_idx] = cor
         
-        # Store center of element 
-        ele_center = []
-        for i in range(np.shape(ele_node)[1]):
-            tem_center = 0
-            for j in range(np.shape(ele_node)[0]):
-                tem_center += ele_node[j, i]
-            ele_center.append(1/3 * (tem_center))
+        # Get the centroid of element 
+        ele_centroid = self.element_centroid(ele_node)
 
         # Noramal vector
         normal_vector =  self.ele_normal_vector(ele_node)
 
         # Stress of element
-        total_normal_stress, total_shear_stress = self.ele_stress(ele_center, normal_vector)
+        element_normal_stress, element_shear_stress = self.ele_stress(ele_centroid, normal_vector)
         
         # Aperture, tansmisity change of element
         ele_hydro_aper = self.cal_aperture_barton(
             ele_aper, 
-            total_normal_stress, 
-            total_shear_stress,
+            element_normal_stress, 
+            element_shear_stress,
             jrc, 
             jcs,
-            phi_r,
-            Ks
+            phi_r
             )
 
         return ele_hydro_aper
@@ -226,90 +255,14 @@ class StressToAperture(MeshApertureDistribution):
                 tem_hyd_aperture = self.single_ele_stress_apply(fracture_index, ele_idx, jrc_plane)
                 
                 output_df['Apert'][ele_idx] = tem_hyd_aperture
-                output_df['Trans'][ele_idx] = 817500 * tem_hyd_aperture**3
+                output_df['Trans'][ele_idx] = 817500 * (tem_hyd_aperture**3)
             fracture_index += 1
             if fracture_index > fracture_set_max:
                 return output_df
     
-if __name__ == '__main__':
-    path = '/Users/weitim/Desktop/研究/研究主軸/FracMan_module/stress_on_aperture_distriution/'
-    file_name = 'FlowDefinition_only_H.mff'
-    node_df, ele_df = MffProcessing.path_input(path + file_name)
-    
-    # fracture strength parameters
-    # trace_jrc = np.array([
-    #     [0.463, -1.1643, 12.456],
-    #     [0.463, -1.1643, 12.456],
-    # ])
-    trace_jrc = np.array([
-        [0, 0, 10],
-        [0, 0, 10],
-    ])
-    jcs = [100, 100]
-    phi_r = [30, 30]
-    Ks = [2, 2]
-    
-    test_model_stress = StressToAperture(node_df, ele_df, trace_jrc, jcs, phi_r, Ks)
-    
-    
-    # stress condition
-    z_list = np.linspace(0, 10, 20)
-    
-    # stress_x = [0, 10]
-    # stress_y = [0, 10]
-    # stress_z = [0, 10]
-    # boundary = [stress_x, stress_y, stress_z]
-    # test_model_stress.bondary_stress(boundary[0], boundary[1], boundary[2])
-    # test_model_stress.main_process()
-    nor_dis_list = []
-    shear_dis_list = []
-    shear_list = []
-    ap_list = []
-    test_list = []
-    for z in z_list: 
-        stress_x = [0, z]
-        stress_y = [0, z]
-        stress_z = [0, 10]
-        boundary = [stress_x, stress_y, stress_z]
-        test_model_stress.bondary_stress(boundary[0], boundary[1], boundary[2])
-        test_model_stress.main_process()
-        shear_list.append(test_model_stress.shear)
-        shear_dis_list.append(test_model_stress.shear_dis)
-        nor_dis_list.append(test_model_stress.nor_dis)
-        ap_list.append(test_model_stress.hydro_aperture)
-        test_list.append(test_model_stress.test)
 
-    
-    fig, ax = plt.subplots(4,1)
-    ax[0].plot(shear_dis_list, shear_list, 'b-.o')  
-    ax[0].set_ylabel('Shear stress (MPa)')
-    ax[0].set_xlabel('Shear displacement (mm)')  
-    ax[0].set_title('Shear stress v.s. Shear displacement')
-    
-    # fig, ax = plt.subplots()
-    ax[1].plot(shear_dis_list, nor_dis_list, 'b-.o')  
-    ax[1].set_ylabel('Dilation (mm)')
-    ax[1].set_xlabel('Shear displacement (mm)')  
-    ax[1].set_title('Dilation v.s. Shear displacement')
-    
-    ax[2].plot(shear_list, test_list, color='b')
-    ax[2].set_ylabel('Mechanical aperture (mm)')
-    ax[2].set_xlabel('Shear stress (Mpa)')  
-    ax[2].set_title('Mechanical aperture v.s. Shear stress')
-    
-    ax[3].plot(shear_list, test_list, color='b')
-    ax[3].set_ylabel('Hydraulic aperture (mm)')
-    ax[3].set_xlabel('Shear stress (Mpa)')  
-    ax[3].set_title(r"$\sigma_{n}$")
-    # ax.set_ylim([-0.1, 0.2])
-    fig.tight_layout()
-    plt.show() 
-    # print(ap_list)
-    
-    # fig, ax = plt.subplots()
-    # ax.plot(z_list, ap_list, 'b-.o')  
-    # ax.set_xlabel('Normal stress (Mpa)')
-    # ax.set_ylabel('Mechanic aperture (mm)')  
-    # ax.set_title('Mechanic aperture v.s. Normal stress')
-    # plt.show()    
-    
+if __name__ == '__main__':
+    pass
+    # output_df = test_model_stress.main_process()
+    # print(output_df)
+        

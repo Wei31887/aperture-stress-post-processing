@@ -1,6 +1,7 @@
 import numpy as np
 import pandas as pd
-import math 
+import math
+from pyparsing import trace_parse_action 
 import shapely.geometry
 import shapely.ops
 import matplotlib.pyplot as plt
@@ -134,6 +135,7 @@ class HeadBoundaryAssign(object):
                 elif self.boundary_type == 'z':
                     output_node_df['Grp'].loc[node] = 2
             else:
+                output_node_df['H'].loc[node] = 0
                 output_node_df['Type'].loc[node] = 0
                 output_node_df['Grp'].loc[node] = 0
                 pass     
@@ -147,20 +149,21 @@ class MeshApertureDistribution(object):
         self.aperture_func = aperture_func
     
     def merge_meshes(self, node_list):
-        """ Merge the meshes of one single plane into one polygon 
+        """ Merge the meshes of one single plane and output the list of coordinate of each node 
         """
         fracture_polygon = []
         for nodes in node_list:
             tem_polygon = shapely.geometry.Polygon([
                     (self.node_df['X'][nodes[0]], self.node_df['Y'][nodes[0]], self.node_df['Z'][nodes[0]]),
-                    (self.node_df['X'][nodes[1]], self.node_df['Y'][nodes[1]], self.node_df['Z'][nodes[1]]),
+                    (self.node_df['X'][nodes[1]], self.node_df['Y'][nodes[1]], self.node_df['Z'][nodes[1]]),  
                     (self.node_df['X'][nodes[2]], self.node_df['Y'][nodes[2]], self.node_df['Z'][nodes[2]])
                     ])
-            # fracture_polygon.append(tem_polygon)
-            merged_polygon = shapely.ops.unary_union([tem_polygon])
-
+            #print(tem_polygon.is_valid)
+            fracture_polygon.append(tem_polygon)
+        merged_polygon = shapely.ops.unary_union(fracture_polygon)
+       # print(merged_polygon.area)
         return merged_polygon
-    
+
     def collect_node_data(self, fracture_index):    
         # Collect mesh data from one fracture
         element_list = [i for i in self.ele_df['Set#'].index \
@@ -173,26 +176,49 @@ class MeshApertureDistribution(object):
                 self.ele_df['Node3'][element]
                              ))
         return node_list
-    
+
     def polygon_tracelength(self, polygon):
         """ Determine the trace length of one fracture polygon
         """
-        polygon_exterior = [exterior for exterior in polygon.exterior.coords]
-        cal_exterior = polygon_exterior[1:]
-        length_list = []
-        for coords in polygon_exterior:
-            for cal_coords in cal_exterior:
-                length = ((coords[0] - cal_coords[0])**2 \
-                            + (coords[1] - cal_coords[1])**2 \
-                            + (coords[2] - cal_coords[2])**2) ** 0.5
-                length_list.append(length)
-            if len(cal_exterior) == 1:
-                break
-            cal_exterior = cal_exterior[1:]
-        two_times_radius = max(length_list)
-        # print(len(length_list))
-        trace_length = (math.pi**0.5) * (two_times_radius / 2)
-        return trace_length
+        try:
+            polygon_exterior = [exterior for exterior in polygon.exterior.coords]
+            cal_exterior = polygon_exterior[1:]
+            length_list = []
+            for coords in polygon_exterior:
+                for cal_coords in cal_exterior:
+                    length = ((coords[0] - cal_coords[0])**2 \
+                                + (coords[1] - cal_coords[1])**2 \
+                                + (coords[2] - cal_coords[2])**2) ** 0.5
+                    length_list.append(length)
+                if len(cal_exterior) == 1:
+                    break
+                cal_exterior = cal_exterior[1:]
+            two_times_radius = max(length_list)
+            trace_length = (math.pi**0.5) * (two_times_radius / 2)
+            #trace_length = two_times_radius
+            return trace_length
+
+        except AttributeError:
+            polygon_list = [p for p in polygon.geoms]
+            trace_length_list = []
+            for poly in polygon_list:
+                
+                polygon_exterior = [exterior for exterior in poly.exterior.coords]
+                cal_exterior = polygon_exterior[1:]
+                length_list = []
+                for coords in polygon_exterior:
+                    for cal_coords in cal_exterior:
+                        length = ((coords[0] - cal_coords[0])**2 \
+                                    + (coords[1] - cal_coords[1])**2 \
+                                    + (coords[2] - cal_coords[2])**2) ** 0.5
+                        length_list.append(length)
+                    if len(cal_exterior) == 1:
+                        break
+                    cal_exterior = cal_exterior[1:]
+                two_times_radius = max(length_list)
+                trace_length = (math.pi**0.5) * (two_times_radius / 2)
+                trace_length_list.append(trace_length)
+            return max(trace_length_list)
     
     def aperture_distribution(self, fracture_index, trace_length):
         mean_func = self.aperture_func[fracture_index-1][0]
@@ -230,8 +256,11 @@ class MeshApertureDistribution(object):
             aperture_mean, aperture_std = self.aperture_distribution(fracture_index, trace_length)
             for ele in self.ele_df[self.ele_df['Set#'] == fracture_index].index:
                 tem_aperture = random.gauss(aperture_mean, aperture_std)
+                if tem_aperture <= 0:
+                    tem_aperture = 1e-7
+                #tem_aperture = aperture_mean
                 output_ele_df['Apert'][ele] = tem_aperture
-                output_ele_df['Trans'][ele] = 817500 * tem_aperture**3
+                output_ele_df['Trans'][ele] = 817500 * (tem_aperture**3)
             fracture_index += 1
             if fracture_index > fracture_set_max:
                 return output_ele_df

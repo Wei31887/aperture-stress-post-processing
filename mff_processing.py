@@ -55,8 +55,8 @@ class MffProcessing(object):
             return data_node_df, data_ele_df
 
     @staticmethod
-    def ele_output_mff(data_path, file_name, cal_ele_df):
-        with open(file_name, mode='w') as f_out, \
+    def ele_output_mff(data_path, output_path_file, cal_ele_df):
+        with open(output_path_file, mode='w') as f_out, \
             open(data_path, mode='r') as f_copy:
             
             orin_lines = f_copy.readlines()
