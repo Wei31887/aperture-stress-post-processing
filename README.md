@@ -1,1 +1,0 @@
-# aperture_distribution_and_stress_loading
