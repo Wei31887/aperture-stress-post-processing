@@ -48,6 +48,7 @@ class StressToAperture(MeshApertureDistribution):
         sigma = np.zeros([3, 3])
         for stress_idx in range(len(model_stress)):
             # Get the element boundary stress from boundary condistion
+            # stress relate with z
             ele_boundary_stress = (model_stress[stress_idx][1][0] * ele_centroid[2]) + model_stress[stress_idx][1][1]
             sigma[stress_idx, stress_idx] = ele_boundary_stress
 
@@ -148,8 +149,8 @@ class StressToAperture(MeshApertureDistribution):
         jrc_mob_div_jrc_peak = JRC_mob/ JRC_peak
 
         # shear displacement
-        # shear_dis_peak = 1000/500 * ((JCS/1000) ** 0.33)  # Temp unit(mm)
-        shear_dis_peak = 2
+        shear_dis_peak = 1000/500 * ((JCS/1000) ** 0.33)  # Temp unit(mm)
+        # shear_dis_peak = 2
         
         # Use the table from Barton et al., 1982 to calculate the shear displacement
         for i in range(len(jrc_table)-1):
