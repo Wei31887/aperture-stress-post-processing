@@ -158,16 +158,15 @@ class MeshApertureDistribution(object):
                     (self.node_df['X'][nodes[1]], self.node_df['Y'][nodes[1]], self.node_df['Z'][nodes[1]]),  
                     (self.node_df['X'][nodes[2]], self.node_df['Y'][nodes[2]], self.node_df['Z'][nodes[2]])
                     ])
-            #print(tem_polygon.is_valid)
+            # print(tem_polygon.is_valid)
             fracture_polygon.append(tem_polygon)
         merged_polygon = shapely.ops.unary_union(fracture_polygon)
-       # print(merged_polygon.area)
         return merged_polygon
 
-    def collect_node_data(self, fracture_index):    
+    def collect_node_data(self, frac_pln_idx):    
         # Collect mesh data from one fracture
-        element_list = [i for i in self.ele_df['Set#'].index \
-                            if self.ele_df['Set#'][i] == fracture_index]
+        element_list = [i for i in self.ele_df['Frac#'].index \
+                            if self.ele_df['Frac#'][i] == frac_pln_idx]
         node_list = []
         for element in element_list:
             node_list.append((
@@ -175,7 +174,8 @@ class MeshApertureDistribution(object):
                 self.ele_df['Node2'][element],
                 self.ele_df['Node3'][element]
                              ))
-        return node_list
+        correspond_frac_idx = int(self.ele_df['Set#'][self.ele_df['Frac#'] == frac_pln_idx].values[0])
+        return node_list, correspond_frac_idx
 
     def polygon_tracelength(self, polygon):
         """ Determine the trace length of one fracture polygon
@@ -196,6 +196,7 @@ class MeshApertureDistribution(object):
             two_times_radius = max(length_list)
             trace_length = (math.pi**0.5) * (two_times_radius / 2)
             #trace_length = two_times_radius
+            # print(trace_length)
             return trace_length
 
         except AttributeError:
@@ -220,9 +221,9 @@ class MeshApertureDistribution(object):
                 trace_length_list.append(trace_length)
             return max(trace_length_list)
     
-    def aperture_distribution(self, fracture_index, trace_length):
-        mean_func = self.aperture_func[fracture_index-1][0]
-        std_func = self.aperture_func[fracture_index-1][1]
+    def aperture_distribution(self, frac_set_idx, trace_length):
+        mean_func = self.aperture_func[frac_set_idx-1][0]
+        std_func = self.aperture_func[frac_set_idx-1][1]
         aperture_mean = mean_func[0] * (trace_length**2) + mean_func[1]*trace_length + mean_func[2]
         aperture_std = std_func[0] * (trace_length**2) + std_func[1]*trace_length + std_func[2]
         
@@ -237,33 +238,33 @@ class MeshApertureDistribution(object):
             1.4. Apply the corresponding aperture
         """
         # Read though the df of element
-        fracture_index = 1 
-        fracture_set_max = max(self.ele_df['Set#'])
+        frac_pln_max = int(max(self.ele_df['Frac#']))
         output_ele_df = self.ele_df
-        while True:
+        
+        for frac_pln_idx in range(1, frac_pln_max+1):
             # 1.1. Find the mesh belong to one single plane
-            tem_node_list = self.collect_node_data(fracture_index)
+            temp_node_list, temp_set_idx = self.collect_node_data(frac_pln_idx)
             
             # 1.2. Merge into one polygon
-            merge_polygon = self.merge_meshes(tem_node_list)
-            # print(merge_polygon)
+            merge_polygon = self.merge_meshes(temp_node_list)
         
             # 1.3. Determine the trace length of plane
             trace_length = self.polygon_tracelength(merge_polygon)
-            
+
             # 1.4. Apply the corresponding aperture
             # And the corresponding trans, stor
-            aperture_mean, aperture_std = self.aperture_distribution(fracture_index, trace_length)
-            for ele in self.ele_df[self.ele_df['Set#'] == fracture_index].index:
+            aperture_mean, aperture_std = self.aperture_distribution(temp_set_idx, trace_length)
+            
+            for ele in self.ele_df[self.ele_df['Frac#'] == frac_pln_idx].index:
                 tem_aperture = random.gauss(aperture_mean, aperture_std)
                 if tem_aperture <= 0:
                     tem_aperture = 1e-7
-                #tem_aperture = aperture_mean
+                    
                 output_ele_df['Apert'][ele] = tem_aperture
                 output_ele_df['Trans'][ele] = 817500 * (tem_aperture**3)
-            fracture_index += 1
-            if fracture_index > fracture_set_max:
-                return output_ele_df
+        
+        return output_ele_df
+            
 
 class AperturePostProcessing(HeadBoundaryAssign, MeshApertureDistribution):
     def __init__(self, node_df, ele_df, aperture_func, boundary, boundary_type, region):

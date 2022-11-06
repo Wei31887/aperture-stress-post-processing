@@ -8,8 +8,8 @@ from mff_processing import MffProcessing
 if __name__ == '__main__':
     # 輸入路徑
     
-    path = 'C:\\Users\\user\\Desktop\\TEST\\'
-    file_name = 'FlowDefinition_1.mff'
+    path = "/Users/weitim/Desktop/Research/organized_modules/aperture-postprocessing/test_file/"
+    file_name = 'FlowDefinition_only_H.mff'
     
     # import mesh data from mff.file
     node_df, ele_df = MffProcessing.path_input(path + file_name)
@@ -28,6 +28,7 @@ if __name__ == '__main__':
     # 生成DFN的 [X, Y, Z, SX, SY, SZ]
     region = np.array([10, 10, 10, 20, 20, 20])
     
+    '''
     #   x
     # ax + by + cz + h (head)
     constant_10 = [0, 0, 0, 10]
@@ -82,3 +83,4 @@ if __name__ == '__main__':
     MffProcessing.node_output_mff('ele.mff', 'liner_x_200.mff', cal_node_df_x)
     MffProcessing.node_output_mff('ele.mff', 'output_y_8.mff', cal_node_df_y)
     MffProcessing.node_output_mff('ele.mff', 'output_z_8.mff', cal_node_df_z)
+    '''
