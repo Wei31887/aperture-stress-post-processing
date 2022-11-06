@@ -223,8 +223,8 @@ class MeshApertureDistribution(object):
     def aperture_distribution(self, fracture_index, trace_length):
         mean_func = self.aperture_func[fracture_index-1][0]
         std_func = self.aperture_func[fracture_index-1][1]
-        aperture_mean = (mean_func[0]**2) * trace_length + mean_func[1]*trace_length + mean_func[2]
-        aperture_std = (std_func[0]**2) * trace_length + std_func[1]*trace_length + std_func[2]
+        aperture_mean = mean_func[0] * (trace_length**2) + mean_func[1]*trace_length + mean_func[2]
+        aperture_std = std_func[0] * (trace_length**2) + std_func[1]*trace_length + std_func[2]
         
         return aperture_mean, aperture_std
     
