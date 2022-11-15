@@ -1,7 +1,6 @@
 import numpy as np
 import pandas as pd
 import math
-from pyparsing import trace_parse_action 
 import shapely.geometry
 import shapely.ops
 import matplotlib.pyplot as plt
@@ -148,34 +147,38 @@ class MeshApertureDistribution(object):
         self.ele_df = ele_df 
         self.aperture_func = aperture_func
     
-    def merge_meshes(self, node_list):
-        """ Merge the meshes of one single plane and output the list of coordinate of each node 
+    def merge_meshes(self, frac_pln_idx):
+        """ 
+        1. collect the correspond fracture plane elements
+        2. Merge the meshes of one single plane and output the list of coordinate of each node 
         """
-        fracture_polygon = []
-        for nodes in node_list:
-            tem_polygon = shapely.geometry.Polygon([
-                    (self.node_df['X'][nodes[0]], self.node_df['Y'][nodes[0]], self.node_df['Z'][nodes[0]]),
-                    (self.node_df['X'][nodes[1]], self.node_df['Y'][nodes[1]], self.node_df['Z'][nodes[1]]),  
-                    (self.node_df['X'][nodes[2]], self.node_df['Y'][nodes[2]], self.node_df['Z'][nodes[2]])
-                    ])
-            # print(tem_polygon.is_valid)
-            fracture_polygon.append(tem_polygon)
-        merged_polygon = shapely.ops.unary_union(fracture_polygon)
-        return merged_polygon
-
-    def collect_node_data(self, frac_pln_idx):    
-        # Collect mesh data from one fracture
-        element_list = [i for i in self.ele_df['Frac#'].index \
-                            if self.ele_df['Frac#'][i] == frac_pln_idx]
-        node_list = []
-        for element in element_list:
-            node_list.append((
-                self.ele_df['Node1'][element],
-                self.ele_df['Node2'][element],
-                self.ele_df['Node3'][element]
-                             ))
+        # Step1: Collect the fracture plane elements
+        element_list = self.ele_df[self.ele_df['Frac#']== frac_pln_idx].index.tolist()
         correspond_frac_idx = int(self.ele_df['Set#'][self.ele_df['Frac#'] == frac_pln_idx].values[0])
-        return node_list, correspond_frac_idx
+
+        # Step2: Merge the meshes
+        fracture_polygon = []
+        for element in element_list:
+            temp_polygon = shapely.geometry.Polygon([
+                        (
+                            self.node_df['X'][self.ele_df['Node1'][element]], 
+                            self.node_df['Y'][self.ele_df['Node1'][element]], 
+                            self.node_df['Z'][self.ele_df['Node1'][element]]
+                        ),
+                        (
+                            self.node_df['X'][self.ele_df['Node2'][element]], 
+                            self.node_df['Y'][self.ele_df['Node2'][element]], 
+                            self.node_df['Z'][self.ele_df['Node2'][element]]
+                        ),
+                        (
+                            self.node_df['X'][self.ele_df['Node3'][element]], 
+                            self.node_df['Y'][self.ele_df['Node3'][element]], 
+                            self.node_df['Z'][self.ele_df['Node3'][element]]
+                        )
+                    ])
+            fracture_polygon.append(temp_polygon)
+        merged_polygon = shapely.ops.unary_union(fracture_polygon)
+        return merged_polygon, correspond_frac_idx
 
     def polygon_tracelength(self, polygon):
         """ Determine the trace length of one fracture polygon
@@ -195,8 +198,6 @@ class MeshApertureDistribution(object):
                 cal_exterior = cal_exterior[1:]
             two_times_radius = max(length_list)
             trace_length = (math.pi**0.5) * (two_times_radius / 2)
-            #trace_length = two_times_radius
-            # print(trace_length)
             return trace_length
 
         except AttributeError:
@@ -231,33 +232,30 @@ class MeshApertureDistribution(object):
     
     def main_distribution(self):
         """ 
-        1. Read though the df of element
-            1.1. Find the mesh belong to one single plane
-            1.2. Merge into one polygon
-            1.3. Determine the trace length of plane
-            1.4. Apply the corresponding aperture
+        Read though the fracture number of dataframe
+            1. Search the single fracture elemtent and merge into one polygon
+            2. Determine the trace length of plane
+            3. Apply the corresponding aperture
         """
-        # Read though the df of element
-        frac_pln_max = int(max(self.ele_df['Frac#']))
+        # Read though the fracture number of dataframe
+        frac_pln_all_idx = self.ele_df['Frac#'].value_counts().index
         output_ele_df = self.ele_df
         
-        for frac_pln_idx in range(1, frac_pln_max+1):
-            # 1.1. Find the mesh belong to one single plane
-            temp_node_list, temp_set_idx = self.collect_node_data(frac_pln_idx)
-            
-            # 1.2. Merge into one polygon
-            merge_polygon = self.merge_meshes(temp_node_list)
+        for frac_pln_idx in frac_pln_all_idx:
+            if frac_pln_idx == 0:
+                continue
+            # 1. Merge into one polygon
+            merge_polygon, temp_set_idx = self.merge_meshes(frac_pln_idx)
         
-            # 1.3. Determine the trace length of plane
+            # 2. Determine the trace length of plane
             trace_length = self.polygon_tracelength(merge_polygon)
 
-            # 1.4. Apply the corresponding aperture
-            # And the corresponding trans, stor
+            # 3. Apply the corresponding aperture and the corresponding trans, stor
             aperture_mean, aperture_std = self.aperture_distribution(temp_set_idx, trace_length)
             
             for ele in self.ele_df[self.ele_df['Frac#'] == frac_pln_idx].index:
                 tem_aperture = random.gauss(aperture_mean, aperture_std)
-                if tem_aperture <= 0:
+                if tem_aperture <= 1e-7:
                     tem_aperture = 1e-7
                     
                 output_ele_df['Apert'][ele] = tem_aperture
