@@ -154,7 +154,6 @@ class MeshApertureDistribution(object):
         """
         # Step1: Collect the fracture plane elements
         element_list = self.ele_df[self.ele_df['Frac#']== frac_pln_idx].index.tolist()
-        correspond_frac_idx = int(self.ele_df['Set#'][self.ele_df['Frac#'] == frac_pln_idx].values[0])
 
         # Step2: Merge the meshes
         fracture_polygon = []
@@ -178,7 +177,7 @@ class MeshApertureDistribution(object):
                     ])
             fracture_polygon.append(temp_polygon)
         merged_polygon = shapely.ops.unary_union(fracture_polygon)
-        return merged_polygon, correspond_frac_idx
+        return merged_polygon
 
     def polygon_tracelength(self, polygon):
         """ Determine the trace length of one fracture polygon
@@ -244,14 +243,16 @@ class MeshApertureDistribution(object):
         for frac_pln_idx in frac_pln_all_idx:
             if frac_pln_idx == 0:
                 continue
+            
+            frac_set_idx = int(self.ele_df['Set#'][self.ele_df['Frac#'] == frac_pln_idx].values[0])
             # 1. Merge into one polygon
-            merge_polygon, temp_set_idx = self.merge_meshes(frac_pln_idx)
+            merge_polygon = self.merge_meshes(frac_pln_idx)
         
             # 2. Determine the trace length of plane
             trace_length = self.polygon_tracelength(merge_polygon)
 
             # 3. Apply the corresponding aperture and the corresponding trans, stor
-            aperture_mean, aperture_std = self.aperture_distribution(temp_set_idx, trace_length)
+            aperture_mean, aperture_std = self.aperture_distribution(frac_set_idx, trace_length)
             
             for ele in self.ele_df[self.ele_df['Frac#'] == frac_pln_idx].index:
                 tem_aperture = random.gauss(aperture_mean, aperture_std)
