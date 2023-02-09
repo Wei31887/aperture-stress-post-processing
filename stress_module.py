@@ -235,31 +235,30 @@ class StressToAperture(MeshApertureDistribution):
             1.3. Determine the trace length and JRC of plane
             1.4. Apply stress with corresponding JRC
         """
-        # Read though the df of element
-        fracture_index = 1 
-        fracture_set_max = max(self.ele_df['Set#'])
-        output_df = self.ele_df.copy()
-        while True:
-            # 1.1. Find the mesh belong to one single plane
-            tem_node_list = self.collect_node_data(fracture_index)
+        # Read through the fracture number of dataframe
+        frac_pln_all_idx = self.ele_df['Frac#'].value_counts().index
+        output_ele_df = self.ele_df.copy()
+        for frac_pln_idx in frac_pln_all_idx:
+            if frac_pln_idx == 0:
+                continue
             
-            # 1.2. Merge into one polygon
-            merge_polygon = self.merge_meshes(tem_node_list)
+            frac_set_idx = int(self.ele_df['Set#'][self.ele_df['Frac#'] == frac_pln_idx].values[0])
+            # 1. Merge into one polygon
+            merge_polygon = self.merge_meshes(frac_pln_idx)
         
-            # 1.3. Determine the trace length and JRC of plane
+            # 2. Determine the trace length of plane
             trace_length = self.polygon_tracelength(merge_polygon)
-            jrc_plane = self.tracelength_jrc(fracture_index, trace_length)
+            jrc_plane = self.tracelength_jrc(frac_set_idx, trace_length)
             
-            # 1.4. Apply stress with corresponding JRC
+            # 3. Apply stress with corresponding JRC
             # And the corresponding trans, stor
-            for ele_idx in self.ele_df[self.ele_df['Set#'] == fracture_index].index:
-                tem_hyd_aperture = self.single_ele_stress_apply(fracture_index, ele_idx, jrc_plane)
+            for ele_idx in self.ele_df[self.ele_df['Set#'] == frac_set_idx].index:
+                tem_hyd_aperture = self.single_ele_stress_apply(frac_set_idx, ele_idx, jrc_plane)
                 
-                output_df['Apert'][ele_idx] = tem_hyd_aperture
-                output_df['Trans'][ele_idx] = 817500 * (tem_hyd_aperture**3)
-            fracture_index += 1
-            if fracture_index > fracture_set_max:
-                return output_df
+                output_ele_df['Apert'][ele_idx] = tem_hyd_aperture
+                output_ele_df['Trans'][ele_idx] = 817500 * (tem_hyd_aperture**3)
+        
+        return output_ele_df
     
 
 if __name__ == '__main__':

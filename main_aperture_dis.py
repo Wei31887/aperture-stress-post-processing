@@ -23,6 +23,7 @@ if __name__ == '__main__':
     aperture_dis = MeshApertureDistribution(node_df, ele_df, trace_aperture)
     # 已經內寬分布的element data frame
     cal_ele_df = aperture_dis.main_distribution()
+    print(cal_ele_df)
     
     # head boundary 給node df 邊界條件
     # 生成DFN的 [X, Y, Z, SX, SY, SZ]

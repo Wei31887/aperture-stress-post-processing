@@ -10,8 +10,8 @@ if __name__ == '__main__':
     # import data file
 
     # path = '/Users/weitim/Desktop/研究/研究主軸/FracMan_module/stress_on_aperture_distriution/'
-    path = 'D:\\wei_data\\Research\\REV_determination\\REV_determination\\REV_with_stress_with_dis\\for_stress_origin_5\\origin_mff\\'
-    file_name = 'boundary_16_x.mff'
+    path = "/Users/weitim/Desktop/Research/organized_modules/aperture-postprocessing/test_file/"
+    file_name = 'FlowDefinition_only_H.mff'
 
     #node, element df
     node_df, ele_df = MffProcessing.path_input(path + file_name)
@@ -37,6 +37,7 @@ if __name__ == '__main__':
 
     # 已給定應力邊界 ELEMENT DF
     cal_ele_df = model_stress.main_process()
+    print(cal_ele_df)
     
     # output calculated element file
     MffProcessing.ele_output_mff(path + file_name, 'ele.mff', cal_ele_df)
